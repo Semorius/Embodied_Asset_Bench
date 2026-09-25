@@ -417,23 +417,24 @@ def run_score(inspect_path, trials_path):
         trials[(row["dataset"], row["asset_id"])].append(row)
     keys = sorted(set(inspections) | set(trials))
     scores = [score_asset(inspections.get(key), trials.get(key, [])) for key in keys]
-    write_jsonl(ROOT / "runs" / "scores_v5.jsonl", scores)
+    write_jsonl(ROOT / "runs" / "scores.jsonl", scores)
     primary = summaries(scores)
     primary.extend({"dataset": "paired", **row} for row in paired_comparison(scores))
-    write_csv(ROOT / "reports" / "primary_metrics_v5.csv", primary)
-    write_csv(ROOT / "reports" / "timing_v5.csv", timing_summaries(scores))
-    write_csv(ROOT / "reports" / "diagnostics_v5.csv", diagnostic_rows(scores))
-    write_csv(ROOT / "reports" / "failures_v5.csv", failure_rows(scores))
+    write_csv(ROOT / "reports" / "primary_metrics.csv", primary)
+    write_csv(ROOT / "reports" / "timing.csv", timing_summaries(scores))
+    write_csv(ROOT / "reports" / "diagnostics.csv", diagnostic_rows(scores))
+    write_csv(ROOT / "reports" / "failures.csv", failure_rows(scores))
     return scores
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Unified Executability v5 离线评分")
-    parser.add_argument("--inspect", type=Path, default=ROOT / "runs" / "inspect_v5.jsonl")
-    parser.add_argument("--trials", type=Path, default=ROOT / "runs" / "trials_v5.jsonl")
+    parser = argparse.ArgumentParser(description="Unified Executability benchmark 离线评分")
+    parser.add_argument("--inspect", type=Path, default=ROOT / "runs" / "inspect.jsonl")
+    parser.add_argument("--trials", type=Path, default=ROOT / "runs" / "trials.jsonl")
     args = parser.parse_args()
     run_score(args.inspect, args.trials)
 
 
 if __name__ == "__main__":
     main()
+

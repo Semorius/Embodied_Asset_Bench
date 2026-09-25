@@ -1,9 +1,9 @@
-"""Manual grasp binding helpers: asset-local X closing and Z approach."""
+"""Authored grasp binding helpers: asset-local X closing and Z approach."""
 from __future__ import annotations
 
 import numpy as np
 
-CONVENTION = "manual_x_closing_z_approach"
+CONVENTION = "asset_local_x_closing_z_approach"
 
 
 class GraspBindingError(ValueError):
@@ -65,3 +65,4 @@ def sync_stage(stage, asset_path, paths, apply=False):
                     prim.RemoveProperty(name)
                 prim.CreateAttribute(name, kind, custom=True).Set(value)
     return report
+

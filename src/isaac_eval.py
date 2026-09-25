@@ -12,15 +12,15 @@ import time
 import traceback
 from collections import defaultdict, deque
 from pathlib import Path
-from manual_grasp import GraspBindingError
+from grasp_contract import GraspBindingError
 
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CONFIG_PATH = Path(os.environ.get("RAW_EVAL_CONFIG", ROOT / "configs" / "config.json"))
 CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-RUN_LABEL = os.environ.get("RAW_EVAL_RUN_LABEL", "v5")
-RESULTS_NAME = os.environ.get("RAW_EVAL_RESULTS", "trials_v5.jsonl")
+RUN_LABEL = os.environ.get("RAW_EVAL_RUN_LABEL", "benchmark")
+RESULTS_NAME = os.environ.get("RAW_EVAL_RESULTS", "trials.jsonl")
 
 
 class EvaluationTimeout(RuntimeError):
@@ -332,7 +332,7 @@ def convert_partnet(app, assets: list[dict]) -> None:
     import omni.kit.commands
     import omni.usd
 
-    output_root = ensure_inside_root(ROOT / "derived_assets" / "partnet_mobility_v5")
+    output_root = ensure_inside_root(ROOT / "derived_assets" / "partnet_mobility_derived")
     output_root.mkdir(parents=True, exist_ok=True)
     for index, asset in enumerate(assets, start=1):
         output_dir = ensure_inside_root(output_root / asset["asset_id"])
@@ -1038,7 +1038,7 @@ def apply_settle_drop(stage, check: dict, ground_z: float, records=None) -> dict
 def observe_stability(stage, check: dict, app, maximum_seconds: float, ground_sensor=None, drop_info=None, collision_records=None, sampling_dt: float | None = None) -> dict:
     import numpy as np
     import omni.timeline
-    from v5_geometry import support_patch
+    from geometry import support_patch
 
     settings = CONFIG["simulation"]
     dt = float(sampling_dt or settings["dt"])
@@ -3599,7 +3599,7 @@ def push_contact(stage, check: dict, app) -> dict:
 def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
     import numpy as np
     from pxr import Gf, UsdGeom
-    from manual_grasp import CONVENTION, column_matrix, local_axes_from_matrix
+    from grasp_contract import CONVENTION, column_matrix, local_axes_from_matrix
 
     output = []
     grasps_path = f"{str(asset_prim_path).rstrip('/')}/grasps/"
@@ -3618,14 +3618,14 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
             and orient_attr and orient_attr.HasAuthoredValueOpinion()
         )
         frame_attr = prim.GetAttribute("grasp:frame_convention")
-        manual = bool(frame_attr and frame_attr.HasAuthoredValueOpinion()
+        authored_frame = bool(frame_attr and frame_attr.HasAuthoredValueOpinion()
                       and str(frame_attr.Get()) == CONVENTION)
-        if pose is None and not has_xform_pose and not manual:
+        if pose is None and not has_xform_pose and not authored_frame:
             continue
         source = "grasp_attributes" if pose is not None else "authored_xform"
         if source == "grasp_attributes":
             matrix = column_matrix(pose)
-            if manual:
+            if authored_frame:
                 xform_world = cache.GetLocalToWorldTransform(prim)
                 world_center = np.asarray(tuple(xform_world.Transform(Gf.Vec3d(0.0, 0.0, 0.0))))
                 world_rotation = np.asarray(xform_world, dtype=float).T[:3, :3]
@@ -3645,7 +3645,7 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
                 np.asarray(tuple(world_transform.TransformDir(Gf.Vec3d(*axis))), dtype=float)
                 for axis in np.eye(3)
             ])
-            if manual:
+            if authored_frame:
                 matrix = column_matrix(world_transform * cache.GetLocalToWorldTransform(stage.GetPrimAtPath(asset_prim_path)).GetInverse())
                 local_transform = matrix
         closing_attr = prim.GetAttribute("grasp:finger_closing")
@@ -3653,15 +3653,15 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
         width_attr = prim.GetAttribute("grasp:width")
         closing_attr_authored = bool(closing_attr and closing_attr.HasAuthoredValueOpinion())
         approach_attr_authored = bool(approach_attr and approach_attr.HasAuthoredValueOpinion())
-        if manual:
+        if authored_frame:
             closing, approach = local_axes_from_matrix(matrix)
             relative_xform = column_matrix(cache.GetLocalToWorldTransform(prim) * cache.GetLocalToWorldTransform(stage.GetPrimAtPath(asset_prim_path)).GetInverse())
             if not np.allclose(relative_xform, matrix, atol=1e-6, rtol=0):
-                raise GraspBindingError(f"manual_grasp_pose_mismatch:{prim_path}")
+                raise GraspBindingError(f"grasp_contract_pose_mismatch:{prim_path}")
             if closing_attr_authored and not np.allclose(np.asarray(closing_attr.Get(), dtype=float), closing, atol=1e-6):
-                raise GraspBindingError(f"manual_grasp_axis_mismatch:{prim_path}:closing")
+                raise GraspBindingError(f"grasp_contract_axis_mismatch:{prim_path}:closing")
             if approach_attr_authored and not np.allclose(np.asarray(approach_attr.Get(), dtype=float), approach, atol=1e-6):
-                raise GraspBindingError(f"manual_grasp_axis_mismatch:{prim_path}:approach")
+                raise GraspBindingError(f"grasp_contract_axis_mismatch:{prim_path}:approach")
         else:
             closing = closing_attr.Get() if closing_attr_authored else matrix[:3, 0]
             approach = approach_attr.Get() if approach_attr_authored else matrix[:3, 2]
@@ -3687,11 +3687,11 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
         # diagnostics, but bind the runtime closing axis to that frame axis.
         authored_closing_world = (
             asset_direction_world(stage, asset_prim_path, authored_closing_local)
-            if manual else rotation[:, 1]
+            if authored_frame else rotation[:, 1]
         )
         authored_approach_world = (
             asset_direction_world(stage, asset_prim_path, authored_approach_local)
-            if manual or approach_attr_authored else rotation[:, 2]
+            if authored_frame or approach_attr_authored else rotation[:, 2]
         )
         authored_closing_world /= max(1e-12, float(np.linalg.norm(authored_closing_world)))
         authored_approach_world /= max(1e-12, float(np.linalg.norm(authored_approach_world)))
@@ -3708,7 +3708,7 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
             "authored_approach_world": authored_approach_world,
             "authored_closing_local": authored_closing_local,
             "authored_approach_local": authored_approach_local,
-            "authored_attribute_frame": "asset_local_manual_xz" if manual else ("grasp_local_pose" if (closing_attr_authored or approach_attr_authored) else "pose_columns"),
+            "authored_attribute_frame": "asset_local_authored_xz" if authored_frame else ("grasp_local_pose" if (closing_attr_authored or approach_attr_authored) else "pose_columns"),
             "authored_pose_world": authored_pose_world,
             "width": float(width) if width is not None else None,
             "component": str(component) if component is not None else None,
@@ -3720,7 +3720,7 @@ def native_grasp_candidates(stage, asset_prim_path: str) -> list[dict]:
             "authored_grasp_prim": prim_path,
             "authored_grasp_local_transform": local_transform,
             "authored_grasp_world_transform": authored_pose_world,
-            "authored_grasp_axis_contract": CONVENTION if manual else "pose_frame_axis_1_to_world_finger_closing;authored_world_approach_to_world_center_axis",
+            "authored_grasp_axis_contract": CONVENTION if authored_frame else "pose_frame_axis_1_to_world_finger_closing;authored_world_approach_to_world_center_axis",
             "authored_grasp_pose_valid": bool(np.all(np.isfinite(matrix)) and unit_scale and orthogonality_error <= 1e-3 and determinant > 0),
         })
     return output
@@ -7226,7 +7226,7 @@ def grasp_once_smoke(app, dataset: str, assets: list[dict], candidate_rank: int,
             }],
         }
         append_result({
-            **v5_base_row(dataset, asset, path),
+            **base_result_row(dataset, asset, path),
             "metric": "grasp_lift",
             "grasp": payload,
             "grasp_score": grasp_score(payload) if payload["applicable"] else None,
@@ -8415,7 +8415,7 @@ def mesh_records(stage):
 
 def initial_collision_overlap(stage, check, records, max_triangle_pairs=50_000):
     import numpy as np
-    from v5_geometry import triangle_aabb_pairs, triangles_intersect
+    from geometry import triangle_aabb_pairs, triangles_intersect
 
     collision = [row for row in records if row["collision"] and row["rigid_body"]]
     graph_edges = []
@@ -8474,7 +8474,7 @@ def initial_collision_overlap(stage, check, records, max_triangle_pairs=50_000):
 def collision_alignment(stage, check: dict, records=None) -> dict:
     import numpy as np
     from scipy.spatial import cKDTree
-    from v5_geometry import audit_collision_mesh, bounds_metrics, complexity_metrics, mean_score
+    from geometry import audit_collision_mesh, bounds_metrics, complexity_metrics, mean_score
 
     records = records if records is not None else mesh_records(stage)
     visual_triangles = [row["vertices"][row["faces"]] for row in records if row["visual"]]
@@ -8744,7 +8744,7 @@ def actuation_quality(payload):
     }
 
 
-def v5_base_row(dataset, asset, path):
+def base_result_row(dataset, asset, path):
     selection = asset.get("selection") or {}
     return {"run_id": time.strftime("%Y%m%d_%H%M%S"), "run_label": RUN_LABEL, "seed": int(CONFIG["simulation"]["seed"]), "dataset": dataset, "asset_id": asset["asset_id"], "category": asset.get("category"), "anchor_category": selection.get("anchor_category"), "anchor_robophyscan_id": selection.get("anchor_robophyscan_id"), "source_asset": str(path) if path else None, "selection": selection}
 
@@ -8753,7 +8753,7 @@ def inspect_assets(app, dataset, assets):
     for index, asset in enumerate(assets, 1):
         started = time.monotonic()
         path = resolved_asset_path(dataset, asset)
-        base = v5_base_row(dataset, asset, path)
+        base = base_result_row(dataset, asset, path)
         print(f"[{index}/{len(assets)}] inspect opening path={path}", flush=True)
         try:
             stage = open_stage(path, app) if path and path.exists() else None
@@ -8913,7 +8913,7 @@ def simulate_assets(app, dataset, assets, shard_index=0, shard_count=1):
         for trial in range(trials):
             if not simulation_job_in_shard(asset_index, trial, trials, shard_index, shard_count):
                 continue
-            base = {**v5_base_row(dataset, asset, path), "trial": trial}
+            base = {**base_result_row(dataset, asset, path), "trial": trial}
             metrics = {}
             def checkpoint():
                 append_result({
@@ -9036,7 +9036,7 @@ def interaction_failure_reason(kind, row):
 
 
 def video_samples():
-    rows = read_jsonl(ROOT / "runs" / "trials_v5.jsonl")
+    rows = read_jsonl(ROOT / "runs" / "trials.jsonl")
     selected = {}
     for row in sorted(rows, key=lambda item: (item["dataset"], item["asset_id"], item.get("trial", 0))):
         for kind, metric_name in (("grasp", "grasp_quality"), ("actuation", "actuation_quality")):
@@ -9240,7 +9240,7 @@ def grasp_video_smoke(
     finger_scale: float | None = None,
     gripper_geometry: str = "wrap",
 ) -> None:
-    output_root = ensure_inside_root(ROOT / "reports" / "grasp_video_smoke_v5" / RUN_LABEL)
+    output_root = ensure_inside_root(ROOT / "reports" / "grasp_video_smoke" / RUN_LABEL)
     if output_root.exists():
         raise FileExistsError(f"录像输出已存在，请更换 RAW_EVAL_RUN_LABEL: {output_root}")
     scales = [float(value) for value in CONFIG["simulation"].get("grasp_finger_scales", [1.0])]
@@ -9353,7 +9353,7 @@ def grasp_video_smoke(
                 "attempts": attempts,
             }
             append_result({
-                **v5_base_row(dataset, asset, path),
+                **base_result_row(dataset, asset, path),
                 "metric": "grasp_lift",
                 "grasp": payload,
                 "grasp_score": grasp_score(payload) if payload.get("applicable") else None,
@@ -9515,7 +9515,7 @@ def sample_videos(app):
         dataset: {asset["asset_id"]: asset for asset in selected_assets(dataset, None)}
         for dataset in ("robophyscan", "artvip", "partnet_mobility")
     }
-    output_root = ensure_inside_root(ROOT / "reports" / "diagnostic_videos_v5")
+    output_root = ensure_inside_root(ROOT / "reports" / "diagnostic_videos")
     manifest = []
     for (dataset, kind, reason), selection in video_samples():
         source_row, attempt = selection["row"], selection["attempt"]
@@ -9575,7 +9575,7 @@ def sample_videos(app):
 
 def resolved_asset_path(dataset: str, asset: dict) -> Path | None:
     if dataset == "partnet_mobility":
-        output = ROOT / "derived_assets" / "partnet_mobility_v5" / asset["asset_id"]
+        output = ROOT / "derived_assets" / "partnet_mobility_derived" / asset["asset_id"]
         flattened = output / "evaluation_asset.usd"
         if flattened.exists():
             return flattened
@@ -9701,7 +9701,7 @@ def validate(app, dataset: str, assets: list[dict], tests: list[str]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Unified Executability v5 Isaac Sim 入口")
+    parser = argparse.ArgumentParser(description="Unified Executability benchmark Isaac Sim 入口")
     subparsers = parser.add_subparsers(dest="command", required=True)
     convert = subparsers.add_parser("convert-partnet")
     convert.add_argument("--limit", type=int)
@@ -9819,3 +9819,4 @@ if __name__ == "__main__":
         sys.stderr.flush()
         os._exit(exit_code)
     raise SystemExit(exit_code)
+

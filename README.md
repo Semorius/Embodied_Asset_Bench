@@ -27,8 +27,8 @@ The evaluator records numeric results separately from applicability and runtime
 status. Blocked, missing, and not-applicable outcomes are never silently turned
 into physical zero scores.
 
-`src/v5_geometry.py` contains geometry and contact helpers; `src/v5_score.py`
-contains metric aggregation and score semantics; `src/manual_grasp.py` defines
+`src/geometry.py` contains geometry and contact helpers; `src/scoring.py`
+contains metric aggregation and score semantics; `src/grasp_contract.py` defines
 the authored grasp contract.
 
 ## External inputs
@@ -36,3 +36,4 @@ the authored grasp contract.
 The external evaluation root must provide a `config.json`, one manifest per
 dataset, and the referenced assets. Do not commit those files when they contain
 asset selections, paths, hashes, or experiment results.
+
